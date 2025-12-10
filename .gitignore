@@ -9,3 +9,4 @@ docs/_build/
 flask_session/
 .venv/
 main.db
+.DS_Store
