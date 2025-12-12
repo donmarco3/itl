@@ -1,0 +1,18 @@
+{% extends "layout.html" %}
+
+{% block title %}
+    Home
+{% endblock %}
+
+{% block main %}
+    <h1>Upload File</h1>
+    <h3>Rules</h3>
+    <ul>
+        <li>Must be .csv file</li>
+        <li>Must have the columns in the following order: Italian word, English word, Italian sentence, English sentence</li>
+    </ul>
+    <form action="/upload" method="post" enctype="multipart/form-data">
+        <input type="file" id="my-list" name="file" accept=".csv">
+        <input type="submit" value="Upload File">
+    </form>
+{% endblock %}

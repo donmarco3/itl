@@ -4,6 +4,7 @@ import sqlite3
 import pandas as pd
 from flask import Flask, flash, redirect, render_template, request, session, url_for
 from flask_session import Session
+from io import StringIO
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from helpers import login_required
@@ -16,29 +17,21 @@ app.config["SESSION_PERMANENT"] = False
 app.config["SESSION_TYPE"] = "filesystem"
 Session(app)
 
-# load csv file into pandas dataframe
-# TODO: turn into function
-csv_filepath = '10-words.csv'
-df = pd.read_csv(csv_filepath)
-
 # establish connection to sqlite database
 db = 'main.db'
 conn = sqlite3.connect(db, check_same_thread=False)
 cursor = conn.cursor()
 
-# write dataframe to sqlite table
-words = 'words'
-df.to_sql(words, conn, if_exists='replace', index=False)
-
 conn.close
 
 
-@app.route("/")
+@app.route("/", methods=["GET", "POST"])
 @login_required
 def index():
     # get username
     cursor.execute("SELECT username FROM users WHERE id = :id", [session["user_id"]])
     username = cursor.fetchall()[0][0]
+
     return render_template("index.html", username=username)
 
 
@@ -72,7 +65,7 @@ def register():
 
         # register new user
         cursor.execute("INSERT INTO users (username, hash) VALUES (:username, :hash)", 
-                       { "username": request.form.get("username"),
+                       {"username": request.form.get("username"),
                        "hash" : generate_password_hash(request.form.get("password"))})
         conn.commit()
 
@@ -133,6 +126,56 @@ def logout():
 
     # redirect user to home page
     return redirect(url_for("index"))
+
+
+@app.route("/upload", methods=["GET", "POST"])
+@login_required
+def upload():
+    # if user adds a list, add to database
+    if request.method == "POST":
+        # make sure file exists and get file name
+        if "file" not in request.files or request.files["file"].filename == "":
+            flash("No file selected")
+            return render_template("upload.html")
+        file = request.files["file"]
+        name = os.path.splitext(file.filename)[0]
+        
+        # read file content into a string and pass into pandas
+        stream = StringIO(file.stream.read().decode("utf-8"))
+        df = pd.read_csv(stream)
+
+        # query database if list with same name exists
+        cursor.execute("SELECT * FROM word_lists WHERE name = ?", [name])
+        rows = cursor.fetchall()
+        if len(rows) != 0:
+            flash("List already in database")
+        # insert word list name into word_lists table
+        else:
+            # get word_list id
+            cursor.execute("INSERT INTO word_lists (name) VALUES (:name)", [name])
+            cursor.execute("SELECT id FROM word_lists WHERE name = :name", [name])
+            word_list_id = cursor.fetchall()[0][0]
+
+            # add only new words into database
+            cursor.execute("SELECT itl_word FROM words")
+            itl_words = cursor.fetchall()
+            for value in df.values:
+                if value[0] not in itl_words:
+                    # insert values into words table
+                    cursor.execute("""
+                                INSERT INTO words (itl_word, eng_word, itl_sen, eng_sen) SELECT :itl_word, :eng_word, :itl_sen, :eng_sen WHERE NOT EXISTS (
+                                SELECT 1 FROM words WHERE itl_word = :itl_word AND eng_word = :eng_word AND itl_sen = :itl_sen AND eng_sen = eng_sen)
+                                """, {"itl_word": value[0], "eng_word": value[1], "itl_sen": value[2], "eng_sen": value[3]})
+                    # insert id's into word_list_words table
+                    cursor.execute("SELECT id FROM words WHERE itl_word = :itl_word", [value[0]])
+                    word_id = cursor.fetchall()[0][0]
+                    cursor.execute("INSERT INTO word_list_words (word_list_id, word_id) VALUES (:word_list_id, :word_id)",
+                               {"word_list_id": word_list_id, "word_id": word_id})
+                
+            conn.commit()
+
+    return render_template("upload.html")
+
 
 
 if __name__ == "__main__":
